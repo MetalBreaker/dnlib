@@ -126,9 +126,9 @@ namespace dnlib.DotNet {
 				return;
 			}
 
-			var scope = o as PdbScope;
-			if (scope != null) {
-				Load(scope);
+			var pdbMethod = o as PdbMethod;
+			if (pdbMethod != null) {
+				Load(pdbMethod);
 				return;
 			}
 
@@ -281,6 +281,14 @@ namespace dnlib.DotNet {
 			case Table.AssemblyRefProcessor:
 			case Table.AssemblyRefOS:
 			case Table.NestedClass:
+			case Table.Document:
+			case Table.MethodDebugInformation:
+			case Table.LocalScope:
+			case Table.LocalVariable:
+			case Table.LocalConstant:
+			case Table.ImportScope:
+			case Table.StateMachineMethod:
+			case Table.CustomDebugInformation:
 				break;
 
 			default:
@@ -668,14 +676,7 @@ namespace dnlib.DotNet {
 			AddCAValue(obj.Value);
 		}
 
-		void Load(PdbScope obj) {
-			if (obj == null)
-				return;
-			Add(obj.Start);
-			Add(obj.End);
-			Add(obj.Scopes);
-			Add(obj.Variables);
-		}
+		void Load(PdbMethod obj) { }
 
 		void Load(ResourceDirectory obj) {
 			if (obj == null)
@@ -721,9 +722,7 @@ namespace dnlib.DotNet {
 			AddToStack(o);
 		}
 
-		void Add(PdbScope scope) {
-			AddToStack(scope);
-		}
+		void Add(PdbMethod pdbMethod) { }
 
 		void Add(TypeSig ts) {
 			AddToStack(ts);
@@ -808,13 +807,6 @@ namespace dnlib.DotNet {
 		}
 
 		void Add(IList<Local> list) {
-			if (list == null)
-				return;
-			foreach (var item in list.GetSafeEnumerable())
-				Add(item);
-		}
-
-		void Add(IList<PdbScope> list) {
 			if (list == null)
 				return;
 			foreach (var item in list.GetSafeEnumerable())
@@ -942,7 +934,7 @@ namespace dnlib.DotNet {
 			Add(body.Instructions);
 			Add(body.ExceptionHandlers);
 			Add(body.Variables);
-			Add(body.Scope);
+			Add(body.PdbMethod);
 		}
 
 		void Add(Instruction instr) {
