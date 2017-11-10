@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.SymbolStore;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -17,12 +16,13 @@ using dnlib.DotNet.Pdb;
 using dnlib.W32Resources;
 
 using DNW = dnlib.DotNet.Writer;
+using dnlib.DotNet.Pdb.Symbols;
 
 namespace dnlib.DotNet {
 	/// <summary>
 	/// Created from a row in the Module table
 	/// </summary>
-	public sealed class ModuleDefMD : ModuleDefMD2, IInstructionOperandResolver, ISignatureReaderHelper {
+	public sealed class ModuleDefMD : ModuleDefMD2, IInstructionOperandResolver {
 		/// <summary>The file that contains all .NET metadata</summary>
 		MetaData metaData;
 		IMethodDecrypter methodDecrypter;
@@ -423,7 +423,7 @@ namespace dnlib.DotNet {
 			LoadPdb(CreateSymbolReader(options));
 		}
 
-		ISymbolReader CreateSymbolReader(ModuleCreationOptions options) {
+		SymbolReader CreateSymbolReader(ModuleCreationOptions options) {
 			if (options.CreateSymbolReader != null) {
 				var symReader = options.CreateSymbolReader(this);
 				if (symReader != null)
@@ -447,8 +447,12 @@ namespace dnlib.DotNet {
 					return SymbolReaderCreator.Create(options.PdbImplementation, metaData, pdbStream);
 			}
 
-			if (options.TryToLoadPdbFromDisk && !string.IsNullOrEmpty(location))
-				return SymbolReaderCreator.Create(options.PdbImplementation, location);
+			if (options.TryToLoadPdbFromDisk) {
+				if (!string.IsNullOrEmpty(location))
+					return SymbolReaderCreator.CreateFromAssemblyFile(options.PdbImplementation, metaData, location);
+				else
+					return SymbolReaderCreator.Create(options.PdbImplementation, metaData);
+			}
 
 			return null;
 		}
@@ -457,7 +461,7 @@ namespace dnlib.DotNet {
 		/// Loads symbols using <paramref name="symbolReader"/>
 		/// </summary>
 		/// <param name="symbolReader">PDB symbol reader</param>
-		public void LoadPdb(ISymbolReader symbolReader) {
+		public void LoadPdb(SymbolReader symbolReader) {
 			if (symbolReader == null)
 				return;
 			if (pdbState != null)
@@ -534,7 +538,14 @@ namespace dnlib.DotNet {
 			var loc = location;
 			if (string.IsNullOrEmpty(loc))
 				return;
-			LoadPdb(SymbolReaderCreator.Create(pdbImpl, loc));
+			LoadPdb(SymbolReaderCreator.Create(pdbImpl, metaData, loc));
+		}
+
+		internal void InitializeCustomDebugInfos(MDToken token, GenericParamContext gpContext, IList<PdbCustomDebugInfo> result) {
+			var ps = pdbState;
+			if (ps == null)
+				return;
+			ps.InitializeCustomDebugInfos(token, gpContext, result);
 		}
 
 		ModuleKind GetKind() {
@@ -1844,15 +1855,16 @@ namespace dnlib.DotNet {
 		/// <param name="method">Method</param>
 		/// <param name="rva">Method RVA</param>
 		/// <param name="implAttrs">Method impl attrs</param>
+		/// <param name="customDebugInfos">Updated with custom debug infos</param>
 		/// <param name="gpContext">Generic parameter context</param>
 		/// <returns>A <see cref="MethodBody"/> or <c>null</c> if none</returns>
-		internal MethodBody ReadMethodBody(MethodDefMD method, RVA rva, MethodImplAttributes implAttrs, GenericParamContext gpContext) {
+		internal MethodBody ReadMethodBody(MethodDefMD method, RVA rva, MethodImplAttributes implAttrs, IList<PdbCustomDebugInfo> customDebugInfos, GenericParamContext gpContext) {
 			MethodBody mb;
 			var mDec = methodDecrypter;
 			if (mDec != null && mDec.GetMethodBody(method.OrigRid, rva, method.Parameters, gpContext, out mb)) {
 				var cilBody = mb as CilBody;
 				if (cilBody != null)
-					return InitializeBodyFromPdb(method, cilBody, method.OrigRid);
+					return InitializeBodyFromPdb(method, cilBody, customDebugInfos);
 				return mb;
 			}
 
@@ -1860,7 +1872,7 @@ namespace dnlib.DotNet {
 				return null;
 			var codeType = implAttrs & MethodImplAttributes.CodeTypeMask;
 			if (codeType == MethodImplAttributes.IL)
-				return InitializeBodyFromPdb(method, ReadCilBody(method.Parameters, rva, gpContext), method.OrigRid);
+				return InitializeBodyFromPdb(method, ReadCilBody(method.Parameters, rva, gpContext), customDebugInfos);
 			if (codeType == MethodImplAttributes.Native)
 				return new NativeMethodBody(rva);
 			return null;
@@ -1871,11 +1883,12 @@ namespace dnlib.DotNet {
 		/// </summary>
 		/// <param name="method">Owner method</param>
 		/// <param name="body">Method body</param>
-		/// <param name="rid">Method rid</param>
+		/// <param name="customDebugInfos">Updated with custom debug infos</param>
 		/// <returns>Returns originak <paramref name="body"/> value</returns>
-		CilBody InitializeBodyFromPdb(MethodDefMD method, CilBody body, uint rid) {
-			if (pdbState != null)
-				pdbState.InitializeMethodBody(this, method, body, rid);
+		CilBody InitializeBodyFromPdb(MethodDefMD method, CilBody body, IList<PdbCustomDebugInfo> customDebugInfos) {
+			var ps = pdbState;
+			if (ps != null)
+				ps.InitializeMethodBody(this, method, body, customDebugInfos);
 			return body;
 		}
 
@@ -2038,10 +2051,6 @@ namespace dnlib.DotNet {
 				return BlobStream.Read(msRow.Instantiation);
 			}
 
-			return null;
-		}
-
-		TypeSig ISignatureReaderHelper.ConvertRTInternalAddress(IntPtr address) {
 			return null;
 		}
 	}
